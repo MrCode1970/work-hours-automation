@@ -21,67 +21,80 @@ def get_sheet():
 
 def run():
     with sync_playwright() as p:
-        # 1. Запуск браузера
+        # 1. Запуск браузера с увеличенным таймаутом
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0")
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
+        page.set_default_timeout(60000) # Увеличиваем до 60 секунд
 
         # 2. Логин
         print("Захожу на сайт...")
-        page.goto("https://ins.ylm.co.il/#/employeeLogin")
+        try:
+            page.goto("https://ins.ylm.co.il/#/employeeLogin", wait_until="networkidle")
+        except Exception as e:
+            print(f"Сайт грузится долго, но пробуем продолжать... {e}")
+
         page.fill("#Username", USERNAME)
+        time.sleep(1)
         page.fill("#YlmCode", PASSWORD)
-        page.click("button:has-text('כניסה')") # Нажимаем вход (обычно там кнопка с таким текстом)
+        time.sleep(1)
         
-        # Ожидание загрузки после логина
-        page.wait_for_load_state("networkidle")
-        time.sleep(5) 
+        print("Нажимаю кнопку входа...")
+        # Кликаем по кнопке submit
+        page.click("button[type='submit']") 
+        
+        # Ждем появления кнопки скачивания (это подтвердит успешный вход)
+        print("Ожидаю загрузки личного кабинета...")
+        page.wait_for_selector("button[ng-click='executeExcelBtn()']", timeout=60000)
 
         # 3. Скачивание файла
         print("Скачиваю Excel...")
         with page.expect_download() as download_info:
-            # Ищем кнопку скачивания по ng-click
             page.click("button[ng-click='executeExcelBtn()']")
         
         download = download_info.value
         path = "data.xlsx"
         download.save_as(path)
+        print("Файл скачан успешно.")
         browser.close()
 
         # 4. Обработка данных
         df = pd.read_excel(path)
-        # В вашем файле столбцы: תאריך (A), כניסה (D), יציאה (E)
-        # Оставляем только нужные данные
+        # Удаляем пустые строки и берем нужные колонки
         df_clean = df[['תאריך', 'כניסה', 'יציאה']].dropna()
 
         # 5. Запись в Google Sheets
         sh = get_sheet()
-        # Определяем имя листа как Месяц.Год (например, 1.26)
         now = datetime.now()
+        # Лист формата 1.26
         sheet_name = f"{now.month}.{now.strftime('%y')}"
         
         try:
             worksheet = sh.worksheet(sheet_name)
         except:
-            print(f"Лист {sheet_name} не найден. Проверьте название!")
+            print(f"Лист {sheet_name} не найден!")
             return
 
-        # Получаем все данные из таблицы, чтобы найти нужные строки
         all_values = worksheet.get_all_values()
         
+        updates = []
         for index, row in df_clean.iterrows():
-            date_str = row['תאריך'] # Формат обычно DD/MM/YYYY
-            entry_time = str(row['כניסה'])[:5] # Обрезаем до HH:MM
-            exit_time = str(row['יציאה'])[:5]
+            date_str = row['תאריך']
+            # Время может быть объектом datetime.time, приводим к строке HH:MM
+            entry_time = row['כניסה'].strftime('%H:%M') if hasattr(row['כניסה'], 'strftime') else str(row['כניסה'])[:5]
+            exit_time = row['יציאה'].strftime('%H:%M') if hasattr(row['יציאה'], 'strftime') else str(row['יציאה'])[:5]
 
-            # Ищем строку с такой датой в столбце B (индекс 1)
             for i, sheet_row in enumerate(all_values):
-                if date_str in sheet_row[1]: # Если дата совпала
+                if len(sheet_row) > 1 and date_str in sheet_row[1]: # Дата в колонке B (индекс 1)
                     row_num = i + 1
-                    # Обновляем ячейки Вход (C) и Выход (D)
-                    worksheet.update_cell(row_num, 3, entry_time) # Столбец C
-                    worksheet.update_cell(row_num, 4, exit_time)  # Столбец D
-                    print(f"Обновлено: {date_str}")
+                    # Готовим данные для обновления (C и D)
+                    worksheet.update_cell(row_num, 3, entry_time)
+                    worksheet.update_cell(row_num, 4, exit_time)
+                    print(f"Обновлена дата: {date_str}")
                     break
+        print("Все данные синхронизированы.")
 
-run()
+if __name__ == "__main__":
+    run()
