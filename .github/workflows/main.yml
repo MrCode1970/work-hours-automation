@@ -1,0 +1,33 @@
+name: Update Work Hours
+
+on:
+  schedule:
+    # Запуск каждый день в 04:00 утра по Гринвичу (это примерно 06:00-07:00 в Израиле)
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Эта строка позволяет запускать скрипт вручную кнопкой
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run automation script
+        env:
+          SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOOGLE_JSON: ${{ secrets.GOOGLE_JSON }}
+        run: python update_hours.py
