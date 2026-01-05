@@ -13,21 +13,27 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
         context = browser.new_context()
         page = context.new_page()
 
+        # Увеличиваем таймауты для GitHub Actions
+        page.set_default_timeout(120000)  # 120s для действий/селекторов
+        page.set_default_navigation_timeout(120000)  # 120s для навигации
+
         try:
-            page.goto("https://ins.ylm.co.il/#/employeeLogin")
+            url = "https://ins.ylm.co.il/#/employeeLogin"
+            # Ждём DOM, а не полный load (часто быстрее и надёжнее на SPA)
+            page.goto(url, wait_until="domcontentloaded")
 
             page.fill("#Username", site_username)
             page.fill("#YlmCode", site_password)
             page.click("button[type='submit']")
 
             report_button = "button[ng-click='vm.employeeReport();']"
-            page.wait_for_selector(report_button, timeout=60000)
+            page.wait_for_selector(report_button)
             page.click(report_button)
 
             now = datetime.now()
             first_day = f"01/{now.strftime('%m/%Y')}"  # 01/MM/YYYY
             date_input = "input[ng-model='vm.report.FromDate']"
-            page.wait_for_selector(date_input, timeout=60000)
+            page.wait_for_selector(date_input)
 
             page.click(date_input)
             page.keyboard.press("Control+A")
@@ -42,7 +48,7 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             time.sleep(2)
 
             excel_button = "button[ng-click='executeExcelBtn()']"
-            page.wait_for_selector(excel_button, timeout=60000)
+            page.wait_for_selector(excel_button)
 
             with page.expect_download() as download_info:
                 page.click(excel_button)
@@ -52,9 +58,15 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             return excel_path
 
         except Exception:
-            # Удобно для отладки (и в GitHub Actions тоже)
+            # Диагностика для CI
             try:
-                page.screenshot(path="debug_screen.png")
+                page.screenshot(path="debug_screen.png", full_page=True)
+            except Exception:
+                pass
+            try:
+                html = page.content()
+                with open("debug_page.html", "w", encoding="utf-8") as f:
+                    f.write(html)
             except Exception:
                 pass
             raise
