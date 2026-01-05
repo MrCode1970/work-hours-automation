@@ -1,11 +1,8 @@
 import os
+from typing import Optional
 
 
-def get_env(name: str, default: str | None = None) -> str:
-    """
-    Безопасное чтение переменных окружения.
-    Если default не задан и переменной нет — падаем с понятной ошибкой.
-    """
+def get_env(name: str, default: Optional[str] = None) -> str:
     val = os.getenv(name, default)
     if val is None or str(val).strip() == "":
         raise RuntimeError(f"Не задана переменная окружения: {name}")
