@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -11,7 +12,7 @@ def open_spreadsheet(gsheet_id: str, google_json_file: str):
     return client.open_by_key(gsheet_id)
 
 
-def month_sheet_name(now: datetime | None = None) -> str:
+def month_sheet_name(now: Optional[datetime] = None) -> str:
     """
     Имя листа в формате M.YY (например, 1.26).
     """
