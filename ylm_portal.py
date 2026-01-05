@@ -13,13 +13,14 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
         context = browser.new_context()
         page = context.new_page()
 
-        # Увеличиваем таймауты для GitHub Actions
-        page.set_default_timeout(120000)  # 120s для действий/селекторов
-        page.set_default_navigation_timeout(120000)  # 120s для навигации
+        page.set_default_timeout(120000)
+        page.set_default_navigation_timeout(120000)
+
+        # Trace — суперполезно в CI
+        context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         try:
             url = "https://ins.ylm.co.il/#/employeeLogin"
-            # Ждём DOM, а не полный load (часто быстрее и надёжнее на SPA)
             page.goto(url, wait_until="domcontentloaded")
 
             page.fill("#Username", site_username)
@@ -31,7 +32,7 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             page.click(report_button)
 
             now = datetime.now()
-            first_day = f"01/{now.strftime('%m/%Y')}"  # 01/MM/YYYY
+            first_day = f"01/{now.strftime('%m/%Y')}"
             date_input = "input[ng-model='vm.report.FromDate']"
             page.wait_for_selector(date_input)
 
@@ -58,7 +59,6 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             return excel_path
 
         except Exception:
-            # Диагностика для CI
             try:
                 page.screenshot(path="debug_screen.png", full_page=True)
             except Exception:
@@ -72,4 +72,9 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             raise
 
         finally:
+            # trace пытаемся сохранить всегда
+            try:
+                context.tracing.stop(path="debug_trace.zip")
+            except Exception:
+                pass
             browser.close()
