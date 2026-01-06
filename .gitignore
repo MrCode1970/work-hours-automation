@@ -1,22 +1,13 @@
-# secrets
-service_key.json
-.env
-
-# python
+# Python
 __pycache__/
 *.pyc
 
-# playwright / downloads / debug
-local_data.xlsx
-debug_screen.png
-
-# venv
-venv/
+# Virtual environments
 .venv/
 
-# logs
-logs/
-*.log
-
-# vscode
-.vscode/
+# Local / sensitive
+service_key.json
+local_data.xlsx
+debug_*.png
+debug_*.html
+debug_*.zip
