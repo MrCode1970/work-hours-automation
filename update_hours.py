@@ -95,8 +95,8 @@ def run():
             except:
                 formatted_date = date_str
 
-            entry_time = row['כניסה'].strftime('%H:%M') if hasattr(row['כניסה'], 'strftime') else str(row['כניסה'])[:5]
-            exit_time = row['יציאה'].strftime('%H:%M') if hasattr(row['יציאה'], 'strftime') else str(row['יציאה'])[:5]
+            entry_time = row['כניסה'].strftime('%H:%M:%S') if hasattr(row['כניסה'], 'strftime') else str(row['כניסה'])[:8]
+            exit_time = row['יציאה'].strftime('%H:%M:%S') if hasattr(row['יציאה'], 'strftime') else str(row['יציאה'])[:8]
 
             for i, sheet_row in enumerate(all_values):
                 if len(sheet_row) > 1 and (formatted_date in sheet_row[1] or date_str in sheet_row[1]):
