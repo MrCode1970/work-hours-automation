@@ -12,6 +12,14 @@ fi
 
 source "$VENV_DIR/bin/activate"
 
+# Load .env if present (simple KEY=VALUE lines).
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
+
 echo "▶ Using python: $(which python)"
 python --version
 

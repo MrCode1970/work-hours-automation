@@ -70,7 +70,7 @@ def run():
         # --- Обработка данных ---
         print("Читаю Excel и обновляю Google Sheets...")
         df = pd.read_excel(path)
-        df_clean = df[['תאריך', 'כניסה', 'יציאה']].dropna()
+        df_clean = df[["תאריך", "כניסה", "יציאה"]].dropna(subset=["תאריך"])
 
         sh = get_sheet()
         now = datetime.now()
@@ -84,6 +84,7 @@ def run():
 
         all_values = worksheet.get_all_values()
         
+        updates = []
         for index, row in df_clean.iterrows():
             date_str = str(row['תאריך']).split()[0] # На случай если там есть время
             # Исправляем формат даты (в Excel 2025-12-01, в таблице может быть 01/12/2025)
@@ -100,10 +101,18 @@ def run():
             for i, sheet_row in enumerate(all_values):
                 if len(sheet_row) > 1 and (formatted_date in sheet_row[1] or date_str in sheet_row[1]):
                     row_num = i + 1
-                    worksheet.update_cell(row_num, 3, entry_time)
-                    worksheet.update_cell(row_num, 4, exit_time)
+                    updates.append({
+                        "range": f"C{row_num}:D{row_num}",
+                        "values": [[entry_time, exit_time]],
+                    })
                     print(f"Обновлено: {formatted_date}")
                     break
+        if updates:
+            try:
+                worksheet.batch_update(updates)
+            except AttributeError:
+                for u in updates:
+                    worksheet.update(u["range"], u["values"])
         print("Готово!")
 
 if __name__ == "__main__":
