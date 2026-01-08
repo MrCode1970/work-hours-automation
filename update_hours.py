@@ -11,6 +11,8 @@ USERNAME = os.environ["SITE_USERNAME"]
 PASSWORD = os.environ["SITE_PASSWORD"]
 GSHEET_ID = os.environ["GSHEET_ID"]
 GOOGLE_JSON = json.loads(os.environ["GOOGLE_JSON"])
+if "private_key" in GOOGLE_JSON and isinstance(GOOGLE_JSON["private_key"], str):
+    GOOGLE_JSON["private_key"] = GOOGLE_JSON["private_key"].replace("\\n", "\n")
 
 
 def _format_time(value) -> str:
