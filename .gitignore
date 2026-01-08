@@ -5,6 +5,13 @@ __pycache__/
 # Virtual environments
 .venv/
 
+# Environment variables
+.env
+.env.*
+
+# Editor settings
+.vscode/
+
 # Local / sensitive
 service_key.json
 local_data.xlsx
