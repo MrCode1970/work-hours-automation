@@ -12,6 +12,18 @@ PASSWORD = os.environ["SITE_PASSWORD"]
 GSHEET_ID = os.environ["GSHEET_ID"]
 GOOGLE_JSON = json.loads(os.environ["GOOGLE_JSON"])
 
+
+def _format_time(value) -> str:
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M")
+    s = str(value).strip()
+    if not s:
+        return ""
+    parsed = pd.to_datetime(s, errors="coerce")
+    if pd.isna(parsed):
+        return s[:5]
+    return parsed.strftime("%H:%M")
+
 def get_sheet():
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_info(GOOGLE_JSON, scopes=scopes)
@@ -95,8 +107,8 @@ def run():
             except:
                 formatted_date = date_str
 
-            entry_time = row['כניסה'].strftime('%H:%M:%S') if hasattr(row['כניסה'], 'strftime') else str(row['כניסה'])[:8]
-            exit_time = row['יציאה'].strftime('%H:%M:%S') if hasattr(row['יציאה'], 'strftime') else str(row['יציאה'])[:8]
+            entry_time = _format_time(row["כניסה"])
+            exit_time = _format_time(row["יציאה"])
 
             for i, sheet_row in enumerate(all_values):
                 if len(sheet_row) > 1 and (formatted_date in sheet_row[1] or date_str in sheet_row[1]):
@@ -109,10 +121,10 @@ def run():
                     break
         if updates:
             try:
-                worksheet.batch_update(updates)
+                worksheet.batch_update(updates, value_input_option="USER_ENTERED")
             except AttributeError:
                 for u in updates:
-                    worksheet.update(u["range"], u["values"])
+                    worksheet.update(u["range"], u["values"], value_input_option="USER_ENTERED")
         print("Готово!")
 
 if __name__ == "__main__":

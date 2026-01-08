@@ -198,10 +198,10 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     # 4) Применяем дозаполнения в основной таблице одним пакетом
     if base_updates:
         try:
-            base_ws.batch_update(base_updates)
+            base_ws.batch_update(base_updates, value_input_option="USER_ENTERED")
         except AttributeError:
             for u in base_updates:
-                base_ws.update(u["range"], u["values"])
+                base_ws.update(u["range"], u["values"], value_input_option="USER_ENTERED")
 
     # 5) Если расхождений нет — удалить лист и выйти
     if not changes_rows:
