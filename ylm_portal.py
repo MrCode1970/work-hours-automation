@@ -1,7 +1,11 @@
 import os
+import random
 import time
 from datetime import datetime
+from typing import Callable, Iterable
 from playwright.sync_api import expect, sync_playwright
+
+from ylm_actions import build_actions
 
 
 def download_excel(site_username: str, site_password: str, excel_path: str = "local_data.xlsx", headless: bool = False) -> str:
@@ -21,17 +25,7 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         try:
-            url = "https://ins.ylm.co.il/#/employeeLogin"
-            page.goto(url, wait_until="domcontentloaded")
-
-            page.fill("#Username", site_username)
-            page.fill("#YlmCode", site_password)
-            page.click("button[type='submit']")
-
-            report_button = "button[ng-click='vm.employeeReport();']"
-            page.wait_for_selector(report_button)
-            time.sleep(3)
-            page.click(report_button)
+            run_actions(page, build_actions(site_username, site_password))
 
             now = datetime.now()
             first_day = f"01/{now.strftime('%m/%Y')}"
@@ -52,13 +46,16 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
 
             excel_button = "button[ng-click='executeExcelBtn()']"
             page.wait_for_selector(excel_button)
-            time.sleep(3)
+            sleep_action_delay()
 
             attempts = 3
             last_error = None
             for attempt in range(1, attempts + 1):
                 print(f"⬇️ Попытка скачивания {attempt}/{attempts}")
                 try:
+                    page.reload(wait_until="networkidle")
+                    page.wait_for_selector(excel_button)
+                    sleep_action_delay()
                     with page.expect_download(timeout=60000) as download_info:
                         page.click(excel_button)
                     download = download_info.value
@@ -80,8 +77,7 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
                         locator.scroll_into_view_if_needed()
                         locator.wait_for(state="visible", timeout=30000)
                         expect(locator).to_be_enabled(timeout=30000)
-                        time.sleep(2)
-                        time.sleep(1)
+                        sleep_action_delay()
                         continue
                     break
 
@@ -109,3 +105,58 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
             except Exception:
                 pass
             browser.close()
+
+
+def _parse_delay(raw: str) -> tuple[float, float]:
+    raw = (raw or "").strip()
+    if not raw:
+        return 0.0, 0.0
+    if "-" in raw:
+        lo, hi = raw.split("-", 1)
+        return float(lo), float(hi)
+    val = float(raw)
+    return val, val
+
+
+def _get_action_delay() -> tuple[float, float]:
+    """
+    ACTION_DELAY=3-5 or ACTION_DELAY=2
+    """
+    return _parse_delay(os.getenv("ACTION_DELAY", "0"))
+
+
+def sleep_action_delay() -> None:
+    lo, hi = _get_action_delay()
+    if hi <= 0:
+        return
+    if hi < lo:
+        lo, hi = hi, lo
+    delay = random.uniform(lo, hi)
+    time.sleep(delay)
+
+
+Step = Callable[[], None]
+
+
+def run_steps(steps: Iterable[Step]) -> None:
+    for step in steps:
+        step()
+        sleep_action_delay()
+
+
+def run_actions(page, actions: Iterable[dict]) -> None:
+    def _step(action: dict) -> Step:
+        kind = action["type"]
+        if kind == "goto":
+            return lambda: page.goto(action["url"], wait_until=action.get("wait_until", "domcontentloaded"))
+        if kind == "wait":
+            return lambda: page.wait_for_selector(action["selector"], timeout=action.get("timeout", 60000))
+        if kind == "fill":
+            return lambda: page.fill(action["selector"], action["value"])
+        if kind == "click":
+            return lambda: page.click(action["selector"])
+        if kind == "reload":
+            return lambda: page.reload(wait_until=action.get("wait_until", "networkidle"))
+        raise ValueError(f"Unknown action type: {kind}")
+
+    run_steps(_step(a) for a in actions)

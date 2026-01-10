@@ -72,7 +72,7 @@ def _delete_worksheet_if_exists(spreadsheet, title: str) -> None:
         return
 
 
-def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) -> None:
+def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) -> bool:
     """
     Создаёт/пересоздаёт лист "Изменения M.YY" (состояние расхождений).
     Если расхождений нет — лист удаляется (или не создаётся).
@@ -194,7 +194,7 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     if not changes_rows:
         _delete_worksheet_if_exists(spreadsheet, changes_title)
         print(f"✅ Расхождений нет — лист '{changes_title}' удалён/не создан.")
-        return
+        return False
 
     # 6) Пересоздать лист изменений
     _delete_worksheet_if_exists(spreadsheet, changes_title)
@@ -304,7 +304,23 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
         ]
     )
 
+    # Удаляем старые правила и задаём новые.
+    metadata = spreadsheet.fetch_sheet_metadata()
+    existing_rules = []
+    for sheet in metadata.get("sheets", []):
+        props = sheet.get("properties", {})
+        if props.get("sheetId") == ws.id:
+            existing_rules = sheet.get("conditionalFormats", []) or []
+            break
+
+    if existing_rules:
+        delete_requests = []
+        for idx in reversed(range(len(existing_rules))):
+            delete_requests.append({"deleteConditionalFormatRule": {"sheetId": ws.id, "index": idx}})
+        spreadsheet.batch_update({"requests": delete_requests})
+
     rules = [
+        # Табель (D) vs Факт (B)
         {
             "addConditionalFormatRule": {
                 "rule": {
@@ -313,15 +329,12 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
                             "sheetId": ws.id,
                             "startRowIndex": start_row - 1,
                             "endRowIndex": end_row,
-                            "startColumnIndex": 5,
-                            "endColumnIndex": 6,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
                         }
                     ],
                     "booleanRule": {
-                        "condition": {
-                            "type": "CUSTOM_FORMULA",
-                            "values": [{"userEnteredValue": f"=F{start_row}<0"}],
-                        },
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}<B{start_row}"}]},
                         "format": {"textFormat": {"foregroundColor": _color_red()}},
                     },
                 },
@@ -336,19 +349,118 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
                             "sheetId": ws.id,
                             "startRowIndex": start_row - 1,
                             "endRowIndex": end_row,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}>B{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 1,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}=B{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
+                    },
+                },
+                "index": 2,
+            }
+        },
+        # Табель (E) vs Факт (C)
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}<C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_red()}},
+                    },
+                },
+                "index": 3,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}>C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 4,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}=C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
+                    },
+                },
+                "index": 5,
+            }
+        },
+        # Разница (F)
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
                             "startColumnIndex": 5,
                             "endColumnIndex": 6,
                         }
                     ],
                     "booleanRule": {
-                        "condition": {
-                            "type": "CUSTOM_FORMULA",
-                            "values": [{"userEnteredValue": f"=F{start_row}>0"}],
-                        },
-                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}<0"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_red()}},
                     },
                 },
-                "index": 1,
+                "index": 6,
             }
         },
         {
@@ -364,17 +476,35 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
                         }
                     ],
                     "booleanRule": {
-                        "condition": {
-                            "type": "CUSTOM_FORMULA",
-                            "values": [{"userEnteredValue": f"=F{start_row}=0"}],
-                        },
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}>0"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 7,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": ws.id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 5,
+                            "endColumnIndex": 6,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}=0"}]},
                         "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
                     },
                 },
-                "index": 2,
+                "index": 8,
             }
         },
     ]
     spreadsheet.batch_update({"requests": rules})
 
     print(f"✅ Лист '{changes_title}' обновлён. Строк: {len(changes_rows)}")
+    return True
