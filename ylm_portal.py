@@ -8,7 +8,13 @@ from playwright.sync_api import expect, sync_playwright
 from ylm_actions import build_actions
 
 
-def download_excel(site_username: str, site_password: str, excel_path: str = "local_data.xlsx", headless: bool = False) -> str:
+def download_excel(
+    site_username: str,
+    site_password: str,
+    excel_path: str = "local_data.xlsx",
+    headless: bool = False,
+    first_day: str | None = None,
+) -> str:
     """
     Логин на ylm.co.il и скачивание Excel отчёта за текущий месяц.
     Возвращает путь к сохранённому файлу excel_path.
@@ -25,8 +31,9 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         try:
-            now = datetime.now()
-            first_day = f"01/{now.strftime('%m/%Y')}"
+            if first_day is None:
+                now = datetime.now()
+                first_day = f"01/{now.strftime('%m/%Y')}"
             return run_actions(
                 page,
                 build_actions(site_username, site_password, first_day),
