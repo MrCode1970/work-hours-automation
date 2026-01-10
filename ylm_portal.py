@@ -25,64 +25,12 @@ def download_excel(site_username: str, site_password: str, excel_path: str = "lo
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         try:
-            run_actions(page, build_actions(site_username, site_password))
-
             now = datetime.now()
             first_day = f"01/{now.strftime('%m/%Y')}"
-            date_input = "input[ng-model='vm.report.FromDate']"
-            page.wait_for_selector(date_input)
-
-            page.click(date_input)
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Backspace")
-            page.fill(date_input, first_day)
-            page.keyboard.press("Enter")
-            time.sleep(1)
-
-            display_button = "button[ng-click='vm.displayReportResult(true)']"
-            page.click(display_button)
-            page.wait_for_load_state("networkidle")
-            time.sleep(2)
-
-            excel_button = "button[ng-click='executeExcelBtn()']"
-            page.wait_for_selector(excel_button)
-            sleep_action_delay()
-
-            attempts = 3
-            last_error = None
-            for attempt in range(1, attempts + 1):
-                print(f"⬇️ Попытка скачивания {attempt}/{attempts}")
-                try:
-                    page.reload(wait_until="networkidle")
-                    page.wait_for_selector(excel_button)
-                    sleep_action_delay()
-                    with page.expect_download(timeout=60000) as download_info:
-                        page.click(excel_button)
-                    download = download_info.value
-                    download.save_as(excel_path)
-
-                    if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
-                        raise RuntimeError("Скачанный файл отсутствует или пустой")
-
-                    print(f"✅ Скачивание успешно: {excel_path}")
-                    return excel_path
-                except Exception as exc:
-                    last_error = exc
-                    print(f"⚠️ Скачивание не удалось: {exc}")
-                    if attempt < attempts:
-                        print("🔄 Перезагружаю страницу и пробую снова...")
-                        page.reload(wait_until="networkidle")
-                        page.wait_for_selector(excel_button)
-                        locator = page.locator(excel_button)
-                        locator.scroll_into_view_if_needed()
-                        locator.wait_for(state="visible", timeout=30000)
-                        expect(locator).to_be_enabled(timeout=30000)
-                        sleep_action_delay()
-                        continue
-                    break
-
-            raise RuntimeError(
-                f"Не удалось скачать Excel за {attempts} попытки. Последняя ошибка: {last_error}"
+            return run_actions(
+                page,
+                build_actions(site_username, site_password, first_day),
+                excel_path,
             )
 
         except Exception:
@@ -144,7 +92,7 @@ def run_steps(steps: Iterable[Step]) -> None:
         sleep_action_delay()
 
 
-def run_actions(page, actions: Iterable[dict]) -> None:
+def run_actions(page, actions: Iterable[dict], excel_path: str) -> str:
     def _step(action: dict) -> Step:
         kind = action["type"]
         if kind == "goto":
@@ -157,6 +105,58 @@ def run_actions(page, actions: Iterable[dict]) -> None:
             return lambda: page.click(action["selector"])
         if kind == "reload":
             return lambda: page.reload(wait_until=action.get("wait_until", "networkidle"))
+        if kind == "press":
+            return lambda: page.keyboard.press(action["key"])
+        if kind == "wait_load_state":
+            return lambda: page.wait_for_load_state(action.get("state", "load"))
+        if kind == "sleep":
+            return lambda: time.sleep(action.get("seconds", 1))
         raise ValueError(f"Unknown action type: {kind}")
 
-    run_steps(_step(a) for a in actions)
+    last_error = None
+    for action in actions:
+        if action.get("type") != "download":
+            run_steps([_step(action)])
+            continue
+
+        selector = action["selector"]
+        attempts = int(action.get("attempts", 3))
+        reload_before_click = bool(action.get("reload_before_click", False))
+        for attempt in range(1, attempts + 1):
+            print(f"⬇️ Попытка скачивания {attempt}/{attempts}")
+            try:
+                if reload_before_click:
+                    page.reload(wait_until="networkidle")
+                    page.wait_for_selector(selector)
+                    sleep_action_delay()
+
+                with page.expect_download(timeout=60000) as download_info:
+                    page.click(selector)
+                download = download_info.value
+                download.save_as(excel_path)
+
+                if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
+                    raise RuntimeError("Скачанный файл отсутствует или пустой")
+
+                print(f"✅ Скачивание успешно: {excel_path}")
+                return excel_path
+            except Exception as exc:
+                last_error = exc
+                print(f"⚠️ Скачивание не удалось: {exc}")
+                if attempt < attempts:
+                    print("🔄 Перезагружаю страницу и пробую снова...")
+                    page.reload(wait_until="networkidle")
+                    page.wait_for_selector(selector)
+                    locator = page.locator(selector)
+                    locator.scroll_into_view_if_needed()
+                    locator.wait_for(state="visible", timeout=30000)
+                    expect(locator).to_be_enabled(timeout=30000)
+                    sleep_action_delay()
+                    continue
+                break
+
+        raise RuntimeError(
+            f"Не удалось скачать Excel за {attempts} попытки. Последняя ошибка: {last_error}"
+        )
+
+    raise RuntimeError("В сценарии действий отсутствует шаг download")
