@@ -58,6 +58,8 @@ def main() -> None:
                 excel_path=temp_path,
                 headless=cfg["HEADLESS"],
                 first_day=first_day,
+                manual_portal=cfg["MANUAL_PORTAL"],
+                manual_download_timeout_ms=cfg["MANUAL_DOWNLOAD_TIMEOUT_MS"],
             )
             os.replace(temp_path, excel_path)
             print(f"📦 Архив сохранён: {excel_path}")
@@ -83,6 +85,8 @@ def main() -> None:
                 excel_path=temp_path,
                 headless=cfg["HEADLESS"],
                 first_day=first_day,
+                manual_portal=cfg["MANUAL_PORTAL"],
+                manual_download_timeout_ms=cfg["MANUAL_DOWNLOAD_TIMEOUT_MS"],
             )
             os.replace(temp_path, excel_path)
 

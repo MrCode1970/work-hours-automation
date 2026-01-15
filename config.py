@@ -42,4 +42,8 @@ def load_config() -> dict:
         "EXCEL_PATH": os.getenv("EXCEL_PATH", "local_data.xlsx").strip(),
         # Если 1/true/yes — НЕ открывать сайт, использовать уже существующий Excel
         "SKIP_DOWNLOAD": get_bool_env("SKIP_DOWNLOAD", "0"),
+        # Если 1/true/yes — ручной режим: логин и скачивание делает пользователь
+        "MANUAL_PORTAL": get_bool_env("MANUAL_PORTAL", "0"),
+        # Таймаут ожидания скачивания в ручном режиме (мс). 0 = без таймаута.
+        "MANUAL_DOWNLOAD_TIMEOUT_MS": int(os.getenv("MANUAL_DOWNLOAD_TIMEOUT_MS", "0").strip() or "0"),
     }

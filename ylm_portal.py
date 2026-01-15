@@ -14,11 +14,17 @@ def download_excel(
     excel_path: str = "local_data.xlsx",
     headless: bool = False,
     first_day: str | None = None,
+    manual_portal: bool = False,
+    manual_download_timeout_ms: int = 0,
 ) -> str:
     """
     Логин на ylm.co.il и скачивание Excel отчёта за текущий месяц.
     Возвращает путь к сохранённому файлу excel_path.
     """
+    if manual_portal and headless:
+        print("⚠️ MANUAL_PORTAL=1 — headless отключён для ручного управления.")
+        headless = False
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context()
@@ -31,6 +37,14 @@ def download_excel(
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         try:
+            if manual_portal:
+                return download_excel_manual(
+                    page,
+                    site_username=site_username,
+                    site_password=site_password,
+                    excel_path=excel_path,
+                    download_timeout_ms=manual_download_timeout_ms,
+                )
             if first_day is None:
                 now = datetime.now()
                 first_day = f"01/{now.strftime('%m/%Y')}"
@@ -60,6 +74,36 @@ def download_excel(
             except Exception:
                 pass
             browser.close()
+
+
+def download_excel_manual(
+    page,
+    *,
+    site_username: str,
+    site_password: str,
+    excel_path: str,
+    download_timeout_ms: int = 0,
+) -> str:
+    """
+    Ручной режим: автоматом только вводим логин/пароль, дальше пользователь
+    сам открывает отчёт и скачивает Excel. Мы лишь ждём файл.
+    """
+    page.goto("https://ins.ylm.co.il/#/employeeLogin", wait_until="domcontentloaded")
+    page.wait_for_selector("#Username", timeout=60000)
+    page.fill("#Username", site_username)
+    page.fill("#YlmCode", site_password)
+
+    print("🖐️ Ручной режим: выполните вход и скачайте Excel. Ожидаю файл...")
+    with page.expect_download(timeout=download_timeout_ms) as download_info:
+        pass
+    download = download_info.value
+    download.save_as(excel_path)
+
+    if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
+        raise RuntimeError("Скачанный файл отсутствует или пустой")
+
+    print(f"✅ Скачивание успешно: {excel_path}")
+    return excel_path
 
 
 def _parse_delay(raw: str) -> tuple[float, float]:

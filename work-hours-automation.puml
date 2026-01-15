@@ -7,7 +7,11 @@ skinparam shadowing false
 actor "User" as User
 component "run.sh" as RunSh
 component "run.py" as RunPy
-component "update_hours.py" as UpdateHours
+component "config.py" as Config
+component "sheets_client.py" as SheetsClient
+component "sync_logic.py" as SyncLogic
+component "ylm_portal.py" as Portal
+component "ylm_actions.py" as Actions
 
 cloud "YLM Portal\nins.ylm.co.il" as YLM
 cloud "Google Sheets API" as GAPI
@@ -18,17 +22,18 @@ database "Google Sheet\nM.YY + Изменения M.YY" as GSheet
 
 User --> RunSh : start
 RunSh --> RunPy : python run.py
-User --> UpdateHours : optional manual run
 
-RunPy --> YLM : download Excel
-RunPy --> Excel : read/write
-RunPy --> GAPI : read/write
-RunPy --> GSheet : update base + changes sheet
-
-UpdateHours --> YLM : download Excel
-UpdateHours --> Excel : read/write
-UpdateHours --> GAPI : write C/D
-UpdateHours --> GSheet : update month sheet
+RunPy --> Config : load_config()
+RunPy --> Portal : download_excel()
+Portal --> Actions : build actions
+Portal --> YLM : login + report + export
+Portal --> Excel : save_as(excel_path)
+RunPy --> SheetsClient : open_spreadsheet()
+SheetsClient --> GAPI : authorize
+SheetsClient --> GSheet : open_by_key()
+RunPy --> SyncLogic : build_changes_sheet()
+SyncLogic --> Excel : read with pandas
+SyncLogic --> GSheet : update base + changes sheet
 
 @enduml
 
@@ -93,15 +98,82 @@ stop
 @enduml
 
 @startuml
-title update_hours.py: Legacy One-way Sync
+title config.py: Environment Loading
 
 start
-:read env (SITE_USERNAME, SITE_PASSWORD, GSHEET_ID, GOOGLE_JSON);
-:launch browser (Playwright);
-:login and download Excel (data.xlsx);
-:read Excel rows;
-:open month sheet M.YY;
-:match dates and update C/D;
-:print "Готово";
+:read SITE_USERNAME;
+:read SITE_PASSWORD;
+:read GSHEET_ID;
+:read GOOGLE_JSON_FILE (default service_key.json);
+:read EXCEL_PATH (default local_data.xlsx);
+:read HEADLESS (bool);
+:read SKIP_DOWNLOAD (bool);
+if (missing required env?) then (yes)
+  :raise RuntimeError;
+  stop
+else (no)
+  :return config dict;
+  stop
+endif
+@enduml
+
+@startuml
+title sheets_client.py: Google Sheets Access
+
+start
+:Credentials.from_service_account_file();
+:authorize client;
+:open_by_key(gsheet_id);
+:month_sheet_name();
+:worksheet(sheet_name);
 stop
+@enduml
+
+@startuml
+title ylm_actions.py: Actions Builder
+
+start
+:build actions list;
+:goto login page;
+:fill credentials;
+:open report;
+:set date range;
+:download Excel;
+stop
+@enduml
+
+@startuml
+title ylm_portal.py: download_excel
+
+start
+:launch Playwright browser;
+:new_context + new_page;
+:start tracing;
+:run actions list;
+:download Excel;
+:stop tracing + close browser;
+:return excel_path;
+stop
+@enduml
+
+@startuml
+title sync_logic.py: build_changes_sheet
+
+start
+:read Excel (תאריך, כניסה, יציאה);
+:read base sheet values;
+:build base_by_date (B:L);
+:normalize times;
+:fill empty C/D/K/L from site data;
+:build changes rows (main + bonus);
+:apply updates to base sheet;
+if (changes_rows empty?) then (yes)
+  :delete changes sheet;
+  stop
+else (no)
+  :recreate changes sheet;
+  :write headers + data;
+  :apply formatting + totals;
+  stop
+endif
 @enduml
