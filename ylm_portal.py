@@ -94,10 +94,17 @@ def download_excel_manual(
     page.fill("#YlmCode", site_password)
 
     print("🖐️ Ручной режим: выполните вход и скачайте Excel. Ожидаю файл...")
-    with page.expect_download(timeout=download_timeout_ms) as download_info:
-        pass
-    download = download_info.value
-    download.save_as(excel_path)
+    try:
+        with page.expect_download(timeout=download_timeout_ms) as download_info:
+            pass
+        download = download_info.value
+        download.save_as(excel_path)
+    except Exception:
+        print(
+            "❌ Excel не был скачан. Скрипт остановлен. "
+            "Проверьте, что файл был скачан в браузере, и запустите снова."
+        )
+        raise SystemExit(1) from None
 
     if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
         raise RuntimeError("Скачанный файл отсутствует или пустой")

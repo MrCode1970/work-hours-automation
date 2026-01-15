@@ -185,22 +185,27 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             my_in_1, my_out_1, my_in_2, my_out_2 = updated_my_cache[base_date]
 
         changed_base = False
+        main_filled = False
         if my_in_1 == "" and site_in_1 != "":
             base_updates.append({"range": f"C{row_num}", "values": [[site_in_1]]})
             my_in_1 = site_in_1
             changed_base = True
+            main_filled = True
         if my_out_1 == "" and site_out_1 != "":
             base_updates.append({"range": f"D{row_num}", "values": [[site_out_1]]})
             my_out_1 = site_out_1
             changed_base = True
-        if my_in_2 == "" and site_in_2 != "":
-            base_updates.append({"range": f"K{row_num}", "values": [[site_in_2]]})
-            my_in_2 = site_in_2
-            changed_base = True
-        if my_out_2 == "" and site_out_2 != "":
-            base_updates.append({"range": f"L{row_num}", "values": [[site_out_2]]})
-            my_out_2 = site_out_2
-            changed_base = True
+            main_filled = True
+        # Бонусы заполняем только если основной блок был пуст и мы его заполнили сейчас.
+        if main_filled:
+            if my_in_2 == "" and site_in_2 != "":
+                base_updates.append({"range": f"K{row_num}", "values": [[site_in_2]]})
+                my_in_2 = site_in_2
+                changed_base = True
+            if my_out_2 == "" and site_out_2 != "":
+                base_updates.append({"range": f"L{row_num}", "values": [[site_out_2]]})
+                my_out_2 = site_out_2
+                changed_base = True
 
         if changed_base:
             updated_my_cache[base_date] = (my_in_1, my_out_1, my_in_2, my_out_2)

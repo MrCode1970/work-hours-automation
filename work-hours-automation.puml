@@ -149,8 +149,18 @@ start
 :launch Playwright browser;
 :new_context + new_page;
 :start tracing;
-:run actions list;
-:download Excel;
+:if MANUAL_PORTAL;
+if (manual mode?) then (yes)
+  :fill login + password;
+  :wait for user download;
+  if (download failed?) then (yes)
+    :raise RuntimeError\n"Excel не был скачан";
+    stop
+  endif
+else (no)
+  :run actions list;
+  :download Excel;
+endif
 :stop tracing + close browser;
 :return excel_path;
 stop
@@ -160,20 +170,50 @@ stop
 title sync_logic.py: build_changes_sheet
 
 start
-:read Excel (תאריך, כניסה, יציאה);
-:read base sheet values;
-:build base_by_date (B:L);
-:normalize times;
-:fill empty C/D/K/L from site data;
-:build changes rows (main + bonus);
-:apply updates to base sheet;
+if (Excel has required columns?) then (yes)
+  :read Excel (תאריך, כניסה, יציאה);
+else (no)
+  :raise RuntimeError;
+  stop
+endif
+:group site rows by date;
+:read base sheet values (B:L);
+:build base_by_date (date -> row_num, C/D, K/L);
+:init base_updates + changes_rows;
+
+while (for each date in site_by_date)
+  :resolve base date by variants;
+  if (date not in base?) then (yes)
+    :skip date;
+  else (no)
+    :pick first two intervals from site;
+    :load my values (C/D, K/L);
+    :fill empty C/D/K/L from site (queued);
+    :update cache for date;
+    if (no diffs in main and bonus?) then (yes)
+      :skip date;
+    else (no)
+      :append main row;
+      if (bonus present?) then (yes)
+        :append bonus row (no date);
+      endif
+    endif
+  endif
+endwhile
+
+:apply base_updates to month sheet;
 if (changes_rows empty?) then (yes)
   :delete changes sheet;
   stop
 else (no)
   :recreate changes sheet;
-  :write headers + data;
-  :apply formatting + totals;
+  :write A1 date stamp;
+  :write merged headers (rows 3-4);
+  :write data block (rows 5+);
+  :set time formats (B-F);
+  :apply background colors (Fact vs Table);
+  :apply conditional formatting rules;
+  :write totals formula;
   stop
 endif
 @enduml
