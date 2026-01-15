@@ -1,0 +1,107 @@
+@startuml
+title work-hours-automation: Executables Overview
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "User" as User
+component "run.sh" as RunSh
+component "run.py" as RunPy
+component "update_hours.py" as UpdateHours
+
+cloud "YLM Portal\nins.ylm.co.il" as YLM
+cloud "Google Sheets API" as GAPI
+
+database "Excel file\nlocal_data.xlsx" as Excel
+
+database "Google Sheet\nM.YY + Изменения M.YY" as GSheet
+
+User --> RunSh : start
+RunSh --> RunPy : python run.py
+User --> UpdateHours : optional manual run
+
+RunPy --> YLM : download Excel
+RunPy --> Excel : read/write
+RunPy --> GAPI : read/write
+RunPy --> GSheet : update base + changes sheet
+
+UpdateHours --> YLM : download Excel
+UpdateHours --> Excel : read/write
+UpdateHours --> GAPI : write C/D
+UpdateHours --> GSheet : update month sheet
+
+@enduml
+
+@startuml
+title run.sh: Environment Bootstrap
+
+start
+:locate project dir;
+:ensure .venv exists;
+if (missing .venv?) then (yes)
+  :print error and exit 1;
+  stop
+endif
+:activate .venv;
+if (.env exists?) then (yes)
+  :export variables from .env;
+endif
+:print python path and version;
+:python run.py;
+stop
+@enduml
+
+@startuml
+title run.py: Main Flow (Executable)
+
+start
+:parse args (--month optional);
+:load_config from env;
+:ensure history/ exists;
+
+if (--month provided?) then (yes)
+  :compute sheet_name + first_day;
+  :excel_path = history/{M.YY}.xlsx;
+  if (archive exists?) then (yes)
+    :use archive;
+  else (no)
+    if (SKIP_DOWNLOAD?) then (yes)
+      :raise RuntimeError;
+      stop
+    else (no)
+      :download Excel to temp;
+      :rename to archive;
+    endif
+  endif
+else (no)
+  :sheet_name = current month;
+  if (SKIP_DOWNLOAD?) then (yes)
+    :use EXCEL_PATH;
+  else (no)
+    :archive previous month if needed;
+    :download Excel to temp;
+    :rename to EXCEL_PATH;
+  endif
+endif
+
+:open Google Sheet;
+:open worksheet M.YY;
+:build changes sheet;
+:fill empty C/D/K/L from site data;
+:print "Готово";
+stop
+@enduml
+
+@startuml
+title update_hours.py: Legacy One-way Sync
+
+start
+:read env (SITE_USERNAME, SITE_PASSWORD, GSHEET_ID, GOOGLE_JSON);
+:launch browser (Playwright);
+:login and download Excel (data.xlsx);
+:read Excel rows;
+:open month sheet M.YY;
+:match dates and update C/D;
+:print "Готово";
+stop
+@enduml

@@ -133,6 +133,8 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     # Каждая строка:
     # [date, my_in, my_out, site_in, site_out, diff_formula, cmp_in, cmp_out]
     changes_rows = []
+    base_updates = []
+    updated_my_cache: dict[str, tuple[str, str, str, str]] = {}
 
     def _row_for_interval(date_label: str, my_in: str, my_out: str, site_in: str, site_out: str):
         my_in = _format_time_for_sheet(my_in)
@@ -179,6 +181,30 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             # даты нет в твоём листе — это не "изменение"
             continue
 
+        if base_date in updated_my_cache:
+            my_in_1, my_out_1, my_in_2, my_out_2 = updated_my_cache[base_date]
+
+        changed_base = False
+        if my_in_1 == "" and site_in_1 != "":
+            base_updates.append({"range": f"C{row_num}", "values": [[site_in_1]]})
+            my_in_1 = site_in_1
+            changed_base = True
+        if my_out_1 == "" and site_out_1 != "":
+            base_updates.append({"range": f"D{row_num}", "values": [[site_out_1]]})
+            my_out_1 = site_out_1
+            changed_base = True
+        if my_in_2 == "" and site_in_2 != "":
+            base_updates.append({"range": f"K{row_num}", "values": [[site_in_2]]})
+            my_in_2 = site_in_2
+            changed_base = True
+        if my_out_2 == "" and site_out_2 != "":
+            base_updates.append({"range": f"L{row_num}", "values": [[site_out_2]]})
+            my_out_2 = site_out_2
+            changed_base = True
+
+        if changed_base:
+            updated_my_cache[base_date] = (my_in_1, my_out_1, my_in_2, my_out_2)
+
         main_diff = (my_in_1 != site_in_1) or (my_out_1 != site_out_1)
         bonus_diff = (my_in_2 != site_in_2) or (my_out_2 != site_out_2)
         has_bonus = bool(my_in_2 or my_out_2 or site_in_2 or site_out_2)
@@ -189,6 +215,14 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
         changes_rows.append(_row_for_interval(base_date, my_in_1, my_out_1, site_in_1, site_out_1))
         if has_bonus:
             changes_rows.append(_row_for_interval("", my_in_2, my_out_2, site_in_2, site_out_2))
+
+    # 4) Применяем дозаполнения в основной таблице одним пакетом
+    if base_updates:
+        try:
+            base_ws.batch_update(base_updates, value_input_option="USER_ENTERED")
+        except AttributeError:
+            for u in base_updates:
+                base_ws.update(u["range"], u["values"], value_input_option="USER_ENTERED")
 
     # 5) Если расхождений нет — удалить лист и выйти
     if not changes_rows:
