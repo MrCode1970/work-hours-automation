@@ -185,6 +185,7 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             my_in_1, my_out_1, my_in_2, my_out_2 = updated_my_cache[base_date]
 
         changed_base = False
+        main_was_empty = (my_in_1 == "" and my_out_1 == "")
         main_filled = False
         if my_in_1 == "" and site_in_1 != "":
             base_updates.append({"range": f"C{row_num}", "values": [[site_in_1]]})
@@ -196,8 +197,8 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             my_out_1 = site_out_1
             changed_base = True
             main_filled = True
-        # Бонусы заполняем только если основной блок был пуст и мы его заполнили сейчас.
-        if main_filled:
+        # Бонусы заполняем только если строка была пустая и мы заполнили её в этой сессии.
+        if main_was_empty and main_filled:
             if my_in_2 == "" and site_in_2 != "":
                 base_updates.append({"range": f"K{row_num}", "values": [[site_in_2]]})
                 my_in_2 = site_in_2
@@ -306,7 +307,21 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     # 8) Фон групп (как у тебя по образцу)
     ws.batch_format(
         [
-            {"range": "A3:F4", "format": {"textFormat": {"bold": True}}},
+            {
+                "range": "A3:F4",
+                "format": {
+                    "textFormat": {"bold": True},
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                },
+            },
+            {
+                "range": f"A{start_row}:F{end_row}",
+                "format": {
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                },
+            },
             {"range": f"B4:C{end_row}", "format": {"backgroundColor": _bg_my()}},
             {"range": f"D4:E{end_row}", "format": {"backgroundColor": _bg_site()}},
             {"range": f"B{start_row}:E{end_row}", "format": {"numberFormat": {"type": "TIME", "pattern": "hh:mm"}}},
@@ -338,6 +353,8 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     ws.batch_format(
         [
             {"range": f"E{total_row}:F{total_row}", "format": {"textFormat": {"bold": True}}},
+            {"range": f"E{total_row}", "format": {"horizontalAlignment": "RIGHT"}},
+            {"range": f"F{total_row}", "format": {"horizontalAlignment": "LEFT"}},
             {"range": f"F{total_row}", "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}}},
             {"range": f"F{total_row}:F{total_row}", "format": {"numberFormat": {"type": "TIME", "pattern": "[h]:mm"}}},
         ]
