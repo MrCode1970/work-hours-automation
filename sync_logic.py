@@ -64,12 +64,481 @@ def _bg_site():
     return {"red": 1.00, "green": 0.98, "blue": 0.85}
 
 
-def _delete_worksheet_if_exists(spreadsheet, title: str) -> None:
+def _find_sheet_id(spreadsheet, title: str) -> int | None:
     try:
         ws = spreadsheet.worksheet(title)
-        spreadsheet.del_worksheet(ws)
+        return ws.id
     except Exception:
-        return
+        return None
+
+
+def _next_sheet_id(spreadsheet) -> int:
+    sheet_ids = [ws.id for ws in spreadsheet.worksheets()]
+    return (max(sheet_ids) + 1) if sheet_ids else 1
+
+
+def _delete_worksheet_if_exists(spreadsheet, title: str) -> bool:
+    sheet_id = _find_sheet_id(spreadsheet, title)
+    if sheet_id is None:
+        return False
+    spreadsheet.batch_update({"requests": [{"deleteSheet": {"sheetId": sheet_id}}]})
+    return True
+
+
+def _cell_for_text(value: str) -> dict:
+    return {"userEnteredValue": {"stringValue": value}}
+
+
+def _cell_for_formula(formula: str) -> dict:
+    return {"userEnteredValue": {"formulaValue": formula}}
+
+
+def _cell_for_time(value: str, *, empty_as_zero: bool = False) -> dict:
+    normalized = _normalize_time(value, empty_as_zero=empty_as_zero)
+    if normalized == "":
+        return _cell_for_text("")
+    minutes = _time_to_minutes(normalized)
+    return {"userEnteredValue": {"numberValue": minutes / 1440}}
+
+
+def _build_changes_sheet_requests(
+    changes_title: str,
+    sheet_id: int,
+    changes_rows: list[list],
+    now: datetime,
+) -> list[dict]:
+    header_rows = [
+        ["Дата", "Факт", "", "Табель", "", "Разница"],
+        ["", "Вход", "Выход", "Вход", "Выход", ""],
+    ]
+    start_row = 5
+    values_block = []
+
+    for idx, rr in enumerate(changes_rows):
+        row_num = start_row + idx
+        if rr[0] == "":
+            diff_formula = (
+                f'=ЕСЛИ(И(B{row_num}="";C{row_num}="";D{row_num}="";E{row_num}="");"";'
+                f'(N(E{row_num})-N(D{row_num}))-(N(C{row_num})-N(B{row_num})))'
+            )
+            fact_in = _format_time_for_sheet(rr[1])
+            fact_out = _format_time_for_sheet(rr[2])
+            site_in = _format_time_for_sheet(rr[3])
+            site_out = _format_time_for_sheet(rr[4])
+            values_block.append([rr[0], fact_in, fact_out, site_in, site_out, diff_formula])
+        else:
+            diff_formula = (
+                f'=ЕСЛИ(И(B{row_num}<>"";C{row_num}<>"";D{row_num}<>"";E{row_num}<>"");'
+                f'(E{row_num}-D{row_num})-(C{row_num}-B{row_num});"")'
+            )
+            values_block.append([rr[0], rr[1], rr[2], rr[3], rr[4], diff_formula])
+
+
+    end_row = start_row + len(values_block) - 1
+    total_row = end_row + 1
+
+    data_rows = []
+    for row in values_block:
+        data_rows.append(
+            {
+                "values": [
+                    _cell_for_text(row[0]),
+                    _cell_for_time(row[1]),
+                    _cell_for_time(row[2]),
+                    _cell_for_time(row[3]),
+                    _cell_for_time(row[4]),
+                    _cell_for_formula(row[5]),
+                ]
+            }
+        )
+
+    header_cell_rows = []
+    for row in header_rows:
+        header_cell_rows.append({"values": [_cell_for_text(v) for v in row]})
+
+    requests = [
+        {
+            "addSheet": {
+                "properties": {
+                    "title": changes_title,
+                    "sheetId": sheet_id,
+                    "gridProperties": {"rowCount": len(changes_rows) + 10, "columnCount": 6},
+                }
+            }
+        },
+        {
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": 0},
+                "rows": [{"values": [_cell_for_text(f"Дата изменений: {now.strftime('%d.%m.%Y')}")]}],
+                "fields": "userEnteredValue",
+            }
+        },
+        {
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": 2, "columnIndex": 0},
+                "rows": header_cell_rows,
+                "fields": "userEnteredValue",
+            }
+        },
+        {
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": start_row - 1, "columnIndex": 0},
+                "rows": data_rows,
+                "fields": "userEnteredValue",
+            }
+        },
+        {
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": total_row - 1, "columnIndex": 4},
+                "rows": [
+                    {
+                        "values": [
+                            _cell_for_text("Итого:"),
+                            _cell_for_formula(f"=СУММ(F{start_row}:F{end_row})"),
+                        ]
+                    }
+                ],
+                "fields": "userEnteredValue",
+            }
+        },
+        {
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 2,
+                    "endRowIndex": 3,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 3,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        },
+        {
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 2,
+                    "endRowIndex": 3,
+                    "startColumnIndex": 3,
+                    "endColumnIndex": 5,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": 4, "startColumnIndex": 0, "endColumnIndex": 6},
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {"bold": True},
+                        "horizontalAlignment": "CENTER",
+                        "verticalAlignment": "MIDDLE",
+                    }
+                },
+                "fields": "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row - 1,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 6,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "horizontalAlignment": "CENTER",
+                        "verticalAlignment": "MIDDLE",
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 3,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 3,
+                },
+                "cell": {"userEnteredFormat": {"backgroundColor": _bg_my()}},
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 3,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": 3,
+                    "endColumnIndex": 5,
+                },
+                "cell": {"userEnteredFormat": {"backgroundColor": _bg_site()}},
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row - 1,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 5,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "TIME", "pattern": "hh:mm"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": start_row - 1,
+                    "endRowIndex": end_row,
+                    "startColumnIndex": 5,
+                    "endColumnIndex": 6,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "TIME", "pattern": "[h]:mm"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": total_row - 1,
+                    "endRowIndex": total_row,
+                    "startColumnIndex": 4,
+                    "endColumnIndex": 6,
+                },
+                "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                "fields": "userEnteredFormat.textFormat.bold",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": total_row - 1,
+                    "endRowIndex": total_row,
+                    "startColumnIndex": 4,
+                    "endColumnIndex": 5,
+                },
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": total_row - 1,
+                    "endRowIndex": total_row,
+                    "startColumnIndex": 5,
+                    "endColumnIndex": 6,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "horizontalAlignment": "LEFT",
+                        "textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}},
+                        "numberFormat": {"type": "TIME", "pattern": "[h]:mm"},
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,textFormat.foregroundColor,numberFormat)",
+            }
+        },
+    ]
+
+    rules = [
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$D{start_row}<$B{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_red()}},
+                    },
+                },
+                "index": 0,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$D{start_row}>$B{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 1,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 4,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$D{start_row}=$B{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
+                    },
+                },
+                "index": 2,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$E{start_row}<$C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_red()}},
+                    },
+                },
+                "index": 3,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$E{start_row}>$C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 4,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 4,
+                            "endColumnIndex": 5,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$E{start_row}=$C{start_row}"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
+                    },
+                },
+                "index": 5,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 5,
+                            "endColumnIndex": 6,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$F{start_row}<0"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_red()}},
+                    },
+                },
+                "index": 6,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 5,
+                            "endColumnIndex": 6,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$F{start_row}>0"}]},
+                        "format": {"textFormat": {"foregroundColor": _color_green()}},
+                    },
+                },
+                "index": 7,
+            }
+        },
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [
+                        {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row - 1,
+                            "endRowIndex": end_row,
+                            "startColumnIndex": 5,
+                            "endColumnIndex": 6,
+                        }
+                    ],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=$F{start_row}=0"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
+                    },
+                },
+                "index": 8,
+            }
+        },
+    ]
+    requests.extend(rules)
+    return requests
 
 
 def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) -> bool:
@@ -232,335 +701,23 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
 
     # 5) Если расхождений нет — удалить лист и выйти
     if not changes_rows:
-        _delete_worksheet_if_exists(spreadsheet, changes_title)
-        print(f"✅ Расхождений нет — лист '{changes_title}' удалён/не создан.")
+        deleted = _delete_worksheet_if_exists(spreadsheet, changes_title)
+        if deleted:
+            print(f"✅ Расхождений нет — лист '{changes_title}' удалён.")
+        else:
+            print(f"✅ Расхождений нет — лист '{changes_title}' не создан.")
         return False
 
-    # 6) Пересоздать лист изменений
-    _delete_worksheet_if_exists(spreadsheet, changes_title)
-    ws = spreadsheet.add_worksheet(title=changes_title, rows=len(changes_rows) + 10, cols=6)
+    # 6) Пересоздать лист изменений через batchUpdate
+    existing_sheet_id = _find_sheet_id(spreadsheet, changes_title)
+    sheet_id = existing_sheet_id if existing_sheet_id is not None else _next_sheet_id(spreadsheet)
 
-    # 6) A1 и заголовки
-    ws.update("A1", [[f"Дата изменений: {datetime.now().strftime('%d.%m.%Y')}"]])
+    requests = []
+    if existing_sheet_id is not None:
+        requests.append({"deleteSheet": {"sheetId": existing_sheet_id}})
+    requests.extend(_build_changes_sheet_requests(changes_title, sheet_id, changes_rows, datetime.now()))
 
-    header_rows = [
-        ["Дата", "Факт", "", "Табель", "", "Разница"],
-        ["", "Вход", "Выход", "Вход", "Выход", ""],
-    ]
-    ws.update("A3:F4", header_rows, value_input_option="USER_ENTERED")
-    spreadsheet.batch_update(
-        {
-            "requests": [
-                {
-                    "mergeCells": {
-                        "range": {
-                            "sheetId": ws.id,
-                            "startRowIndex": 2,
-                            "endRowIndex": 3,
-                            "startColumnIndex": 1,
-                            "endColumnIndex": 3,
-                        },
-                        "mergeType": "MERGE_ALL",
-                    }
-                },
-                {
-                    "mergeCells": {
-                        "range": {
-                            "sheetId": ws.id,
-                            "startRowIndex": 2,
-                            "endRowIndex": 3,
-                            "startColumnIndex": 3,
-                            "endColumnIndex": 5,
-                        },
-                        "mergeType": "MERGE_ALL",
-                    }
-                },
-            ]
-        }
-    )
-
-    # 7) Данные одним блоком
-    start_row = 5
-    values_block = []
-    for idx, rr in enumerate(changes_rows):
-        row_num = start_row + idx
-        diff_formula = (
-            f'=ЕСЛИ(И(B{row_num}<>"";C{row_num}<>"";D{row_num}<>"";E{row_num}<>"");'
-            f'(E{row_num}-D{row_num})-(C{row_num}-B{row_num});"")'
-        )
-        if rr[0] == "":
-            fact_in = _format_time_for_sheet(rr[1], empty_as_zero=True)
-            fact_out = _format_time_for_sheet(rr[2], empty_as_zero=True)
-            site_in = _format_time_for_sheet(rr[3], empty_as_zero=True)
-            site_out = _format_time_for_sheet(rr[4], empty_as_zero=True)
-            values_block.append([rr[0], fact_in, fact_out, site_in, site_out, diff_formula])
-        else:
-            values_block.append([rr[0], rr[1], rr[2], rr[3], rr[4], diff_formula])
-
-    end_row = start_row + len(values_block) - 1
-    ws.update(
-        f"A{start_row}:F{end_row}",
-        values_block,
-        value_input_option="USER_ENTERED",
-    )
-
-    # 8) Фон групп (как у тебя по образцу)
-    ws.batch_format(
-        [
-            {
-                "range": "A3:F4",
-                "format": {
-                    "textFormat": {"bold": True},
-                    "horizontalAlignment": "CENTER",
-                    "verticalAlignment": "MIDDLE",
-                },
-            },
-            {
-                "range": f"A{start_row}:F{end_row}",
-                "format": {
-                    "horizontalAlignment": "CENTER",
-                    "verticalAlignment": "MIDDLE",
-                },
-            },
-            {"range": f"B4:C{end_row}", "format": {"backgroundColor": _bg_my()}},
-            {"range": f"D4:E{end_row}", "format": {"backgroundColor": _bg_site()}},
-            {"range": f"B{start_row}:E{end_row}", "format": {"numberFormat": {"type": "TIME", "pattern": "hh:mm"}}},
-            {"range": f"F{start_row}:F{end_row}", "format": {"numberFormat": {"type": "TIME", "pattern": "[h]:mm"}}},
-        ]
-    )
-
-    # 9) Окраска текста: сайт и разница
-    for idx, rr in enumerate(changes_rows):
-        row_num = start_row + idx
-
-        cmp_in = rr[6]
-        cmp_out = rr[7]
-        if cmp_in != 0:
-            c = _color_red() if cmp_in < 0 else _color_green()
-            ws.format(f"D{row_num}", {"textFormat": {"foregroundColor": c}})
-        if cmp_out != 0:
-            c = _color_red() if cmp_out < 0 else _color_green()
-            ws.format(f"E{row_num}", {"textFormat": {"foregroundColor": c}})
-
-    # 10) Итого: только если есть строки, где разница реально посчитана
-    total_row = end_row + 1
-    total_formula = f"=СУММ(F{start_row}:F{end_row})"
-    ws.update(
-        f"E{total_row}:F{total_row}",
-        [["Итого:", total_formula]],
-        value_input_option="USER_ENTERED",
-    )
-    ws.batch_format(
-        [
-            {"range": f"E{total_row}:F{total_row}", "format": {"textFormat": {"bold": True}}},
-            {"range": f"E{total_row}", "format": {"horizontalAlignment": "RIGHT"}},
-            {"range": f"F{total_row}", "format": {"horizontalAlignment": "LEFT"}},
-            {"range": f"F{total_row}", "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}}},
-            {"range": f"F{total_row}:F{total_row}", "format": {"numberFormat": {"type": "TIME", "pattern": "[h]:mm"}}},
-        ]
-    )
-
-    # Удаляем старые правила и задаём новые.
-    metadata = spreadsheet.fetch_sheet_metadata()
-    existing_rules = []
-    for sheet in metadata.get("sheets", []):
-        props = sheet.get("properties", {})
-        if props.get("sheetId") == ws.id:
-            existing_rules = sheet.get("conditionalFormats", []) or []
-            break
-
-    if existing_rules:
-        delete_requests = []
-        for idx in reversed(range(len(existing_rules))):
-            delete_requests.append({"deleteConditionalFormatRule": {"sheetId": ws.id, "index": idx}})
-        spreadsheet.batch_update({"requests": delete_requests})
-
-    rules = [
-        # Табель (D) vs Факт (B)
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 3,
-                            "endColumnIndex": 4,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}<B{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_red()}},
-                    },
-                },
-                "index": 0,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 3,
-                            "endColumnIndex": 4,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}>B{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_green()}},
-                    },
-                },
-                "index": 1,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 3,
-                            "endColumnIndex": 4,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=D{start_row}=B{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
-                    },
-                },
-                "index": 2,
-            }
-        },
-        # Табель (E) vs Факт (C)
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 4,
-                            "endColumnIndex": 5,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}<C{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_red()}},
-                    },
-                },
-                "index": 3,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 4,
-                            "endColumnIndex": 5,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}>C{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_green()}},
-                    },
-                },
-                "index": 4,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 4,
-                            "endColumnIndex": 5,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=E{start_row}=C{start_row}"}]},
-                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
-                    },
-                },
-                "index": 5,
-            }
-        },
-        # Разница (F)
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 5,
-                            "endColumnIndex": 6,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}<0"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_red()}},
-                    },
-                },
-                "index": 6,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 5,
-                            "endColumnIndex": 6,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}>0"}]},
-                        "format": {"textFormat": {"foregroundColor": _color_green()}},
-                    },
-                },
-                "index": 7,
-            }
-        },
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [
-                        {
-                            "sheetId": ws.id,
-                            "startRowIndex": start_row - 1,
-                            "endRowIndex": end_row,
-                            "startColumnIndex": 5,
-                            "endColumnIndex": 6,
-                        }
-                    ],
-                    "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=F{start_row}=0"}]},
-                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0, "blue": 0}}},
-                    },
-                },
-                "index": 8,
-            }
-        },
-    ]
-    spreadsheet.batch_update({"requests": rules})
+    spreadsheet.batch_update({"requests": requests})
 
     print(f"✅ Лист '{changes_title}' обновлён. Строк: {len(changes_rows)}")
     return True
