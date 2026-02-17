@@ -40,10 +40,16 @@ def load_config() -> dict:
         "HEADLESS": get_headless(),
         # Имя временного Excel-файла
         "EXCEL_PATH": os.getenv("EXCEL_PATH", "local_data.xlsx").strip(),
+        # Явный источник файла (pdf/xlsx). Если задан, используется вместо скачивания.
+        "SOURCE_FILE": os.getenv("SOURCE_FILE", "").strip(),
         # Если 1/true/yes — НЕ открывать сайт, использовать уже существующий Excel
         "SKIP_DOWNLOAD": get_bool_env("SKIP_DOWNLOAD", "0"),
         # Если 1/true/yes — ручной режим: логин и скачивание делает пользователь
         "MANUAL_PORTAL": get_bool_env("MANUAL_PORTAL", "0"),
         # Таймаут ожидания скачивания в ручном режиме (мс). 0 = без таймаута.
         "MANUAL_DOWNLOAD_TIMEOUT_MS": int(os.getenv("MANUAL_DOWNLOAD_TIMEOUT_MS", "0").strip() or "0"),
+        # Если 1/true/yes — открыть портал в мобильном UI для ручных действий и выйти.
+        "MOBILE_UI": get_bool_env("MOBILE_UI", "0"),
+        # Device preset для мобильного UI (Playwright). Пример: "iPhone 14 Pro Max".
+        "MOBILE_DEVICE": os.getenv("MOBILE_DEVICE", "iPhone 14 Pro Max").strip(),
     }

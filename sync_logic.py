@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 import pandas as pd
 
+LOCAL_COLUMNS = ["תאריך", "כניסה", "יציאה"]
+
 
 def _normalize_time(value, *, empty_as_zero: bool = False) -> str:
     """
@@ -555,9 +557,9 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
 
     # 1) Считаем Excel (сайт)
     df = pd.read_excel(excel_path)
-    if not all(c in df.columns for c in ["תאריך", "כניסה", "יציאה"]):
-        raise RuntimeError("Excel не содержит ожидаемые колонки: תאריך, כניסה, יציאה")
-    df = df[["תאריך", "כניסה", "יציאה"]].dropna(subset=["תאריך"])
+    if not all(c in df.columns for c in LOCAL_COLUMNS):
+        raise RuntimeError("local_data.xlsx не содержит ожидаемые колонки: תאריך, כניסה, יציאה")
+    df = df[LOCAL_COLUMNS]
 
     # date_obj -> [(site_in, site_out), ...]
     site_by_date: dict[datetime, list[tuple[str, str]]] = {}
@@ -602,7 +604,9 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
     # Каждая строка:
     # [date, my_in, my_out, site_in, site_out, diff_formula, cmp_in, cmp_out]
     changes_rows = []
+    missing_dates_rows = []
     base_updates = []
+    filled_cells_by_date: dict[str, list[tuple[str, str]]] = {}
     updated_my_cache: dict[str, tuple[str, str, str, str]] = {}
 
     def _row_for_interval(date_label: str, my_in: str, my_out: str, site_in: str, site_out: str):
@@ -619,6 +623,11 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             cmp_out = -1 if _time_to_minutes(site_out) < _time_to_minutes(my_out) else 1
 
         return [date_label, my_in, my_out, site_in, site_out, "", cmp_in, cmp_out]
+
+    def _mark_filled_cell(date_label: str, column_name: str, value: str) -> None:
+        if date_label not in filled_cells_by_date:
+            filled_cells_by_date[date_label] = []
+        filled_cells_by_date[date_label].append((column_name, _format_time_for_sheet(value)))
 
     for date_key, intervals in site_by_date.items():
         d = pd.to_datetime(date_key)
@@ -647,7 +656,8 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
                 break
 
         if base_date is None or row_num is None:
-            # даты нет в твоём листе — это не "изменение"
+            # даты нет в твоём листе — фиксируем для отчёта
+            missing_dates_rows.append([date_variants[0], "", "", "", "", "", 0, 0])
             continue
 
         if base_date in updated_my_cache:
@@ -658,11 +668,13 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
         main_filled = False
         if my_in_1 == "" and site_in_1 != "":
             base_updates.append({"range": f"C{row_num}", "values": [[site_in_1]]})
+            _mark_filled_cell(date_variants[0], "C", site_in_1)
             my_in_1 = site_in_1
             changed_base = True
             main_filled = True
         if my_out_1 == "" and site_out_1 != "":
             base_updates.append({"range": f"D{row_num}", "values": [[site_out_1]]})
+            _mark_filled_cell(date_variants[0], "D", site_out_1)
             my_out_1 = site_out_1
             changed_base = True
             main_filled = True
@@ -670,10 +682,12 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
         if main_was_empty and main_filled:
             if my_in_2 == "" and site_in_2 != "":
                 base_updates.append({"range": f"K{row_num}", "values": [[site_in_2]]})
+                _mark_filled_cell(date_variants[0], "K", site_in_2)
                 my_in_2 = site_in_2
                 changed_base = True
             if my_out_2 == "" and site_out_2 != "":
                 base_updates.append({"range": f"L{row_num}", "values": [[site_out_2]]})
+                _mark_filled_cell(date_variants[0], "L", site_out_2)
                 my_out_2 = site_out_2
                 changed_base = True
 
@@ -699,14 +713,44 @@ def build_changes_sheet(spreadsheet, base_ws, sheet_name: str, excel_path: str) 
             for u in base_updates:
                 base_ws.update(u["range"], u["values"], value_input_option="USER_ENTERED")
 
+    filled_cells_total = sum(len(items) for items in filled_cells_by_date.values())
+    if filled_cells_total == 0:
+        print("🧩 Дозаполнение: добавлено ячеек=0.")
+    else:
+        print(
+            f"🧩 Дозаполнение: добавлено ячеек={filled_cells_total}, дат={len(filled_cells_by_date)}."
+        )
+
+        def _filled_date_sort_key(date_label: str):
+            try:
+                parsed = pd.to_datetime(date_label, dayfirst=True)
+                return (0, parsed.to_pydatetime())
+            except Exception:
+                return (1, date_label)
+
+        for date_label in sorted(filled_cells_by_date.keys(), key=_filled_date_sort_key):
+            details = ", ".join(
+                f"{column_name}={value}"
+                for column_name, value in filled_cells_by_date[date_label]
+            )
+            print(f"   {date_label}: {details}")
+
     # 5) Если расхождений нет — удалить лист и выйти
-    if not changes_rows:
+    if not changes_rows and not missing_dates_rows:
         deleted = _delete_worksheet_if_exists(spreadsheet, changes_title)
         if deleted:
             print(f"✅ Расхождений нет — лист '{changes_title}' удалён.")
         else:
             print(f"✅ Расхождений нет — лист '{changes_title}' не создан.")
         return False
+
+    if missing_dates_rows:
+        if changes_rows:
+            changes_rows.append(["", "", "", "", "", "", 0, 0])
+        changes_rows.append(
+            ["Даты есть в табеле, но нет в листе месяца", "", "", "", "", "", 0, 0]
+        )
+        changes_rows.extend(missing_dates_rows)
 
     # 6) Пересоздать лист изменений через batchUpdate
     existing_sheet_id = _find_sheet_id(spreadsheet, changes_title)

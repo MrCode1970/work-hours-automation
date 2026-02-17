@@ -1,5 +1,6 @@
 import os
 import random
+import tempfile
 import time
 from datetime import datetime
 from typing import Callable, Iterable
@@ -11,15 +12,14 @@ from ylm_actions import build_actions
 def download_excel(
     site_username: str,
     site_password: str,
-    excel_path: str = "local_data.xlsx",
     headless: bool = False,
     first_day: str | None = None,
     manual_portal: bool = False,
     manual_download_timeout_ms: int = 0,
-) -> str:
+) -> tuple[str, str]:
     """
     Логин на ylm.co.il и скачивание Excel отчёта за текущий месяц.
-    Возвращает путь к сохранённому файлу excel_path.
+    Возвращает путь к временному файлу и реальное расширение (xlsx/pdf).
     """
     if manual_portal and headless:
         print("⚠️ MANUAL_PORTAL=1 — headless отключён для ручного управления.")
@@ -42,7 +42,6 @@ def download_excel(
                     page,
                     site_username=site_username,
                     site_password=site_password,
-                    excel_path=excel_path,
                     download_timeout_ms=manual_download_timeout_ms,
                 )
             if first_day is None:
@@ -51,7 +50,6 @@ def download_excel(
             return run_actions(
                 page,
                 build_actions(site_username, site_password, first_day),
-                excel_path,
             )
 
         except Exception:
@@ -76,14 +74,79 @@ def download_excel(
             browser.close()
 
 
+def open_portal_mobile(
+    *,
+    site_username: str,
+    site_password: str,
+    headless: bool = False,
+    device_name: str = "iPhone 14 Pro Max",
+    download_timeout_ms: int = 0,
+) -> tuple[str, str]:
+    if headless:
+        print("⚠️ MOBILE_UI=1 — headless отключён для ручного управления.")
+        headless = False
+
+    with sync_playwright() as p:
+        device = p.devices.get(device_name)
+        if not device:
+            raise RuntimeError(f"Не найден device preset: {device_name}")
+
+        print(f"📱 MOBILE_UI=1 — открываю портал в мобильном интерфейсе ({device_name}).")
+        browser = p.chromium.launch(headless=headless)
+        context = browser.new_context(
+            **device,
+            locale="he-IL",
+            timezone_id="Asia/Jerusalem",
+        )
+        page = context.new_page()
+        page.set_default_timeout(120000)
+        page.set_default_navigation_timeout(120000)
+
+        try:
+            page.goto("https://ins.ylm.co.il/#/employeeLogin", wait_until="domcontentloaded")
+            page.wait_for_selector("#Username", timeout=60000)
+            page.fill("#Username", site_username)
+            page.fill("#YlmCode", site_password)
+
+            print("🖐️ Ручной режим (mobile): выполните вход, внесите часы и скачайте отчёт.")
+            print("📥 Ожидаю скачанный файл из браузера...")
+            try:
+                with page.expect_download(timeout=download_timeout_ms) as download_info:
+                    pass
+                download = download_info.value
+                temp_path, ext = _save_download_to_temp(download)
+            except Exception:
+                print(
+                    "❌ Файл не был скачан. Скрипт остановлен. "
+                    "Проверьте, что файл был скачан в браузере, и запустите снова."
+                )
+                raise SystemExit(1) from None
+
+            if not os.path.exists(temp_path) or os.path.getsize(temp_path) <= 0:
+                raise RuntimeError("Скачанный файл отсутствует или пустой")
+
+            print(f"✅ Скачивание успешно: {temp_path}")
+            return temp_path, ext
+        finally:
+            browser.close()
+
+
+def _save_download_to_temp(download) -> tuple[str, str]:
+    suggested = download.suggested_filename or "report.xlsx"
+    ext = os.path.splitext(suggested)[1].lstrip(".").lower() or "xlsx"
+    fd, temp_path = tempfile.mkstemp(prefix="ylm_download_", suffix=f".{ext}")
+    os.close(fd)
+    download.save_as(temp_path)
+    return temp_path, ext
+
+
 def download_excel_manual(
     page,
     *,
     site_username: str,
     site_password: str,
-    excel_path: str,
     download_timeout_ms: int = 0,
-) -> str:
+) -> tuple[str, str]:
     """
     Ручной режим: автоматом только вводим логин/пароль, дальше пользователь
     сам открывает отчёт и скачивает Excel. Мы лишь ждём файл.
@@ -98,7 +161,7 @@ def download_excel_manual(
         with page.expect_download(timeout=download_timeout_ms) as download_info:
             pass
         download = download_info.value
-        download.save_as(excel_path)
+        temp_path, ext = _save_download_to_temp(download)
     except Exception:
         print(
             "❌ Excel не был скачан. Скрипт остановлен. "
@@ -106,11 +169,11 @@ def download_excel_manual(
         )
         raise SystemExit(1) from None
 
-    if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
+    if not os.path.exists(temp_path) or os.path.getsize(temp_path) <= 0:
         raise RuntimeError("Скачанный файл отсутствует или пустой")
 
-    print(f"✅ Скачивание успешно: {excel_path}")
-    return excel_path
+    print(f"✅ Скачивание успешно: {temp_path}")
+    return temp_path, ext
 
 
 def _parse_delay(raw: str) -> tuple[float, float]:
@@ -150,7 +213,7 @@ def run_steps(steps: Iterable[Step]) -> None:
         sleep_action_delay()
 
 
-def run_actions(page, actions: Iterable[dict], excel_path: str) -> str:
+def run_actions(page, actions: Iterable[dict]) -> tuple[str, str]:
     def _step(action: dict) -> Step:
         kind = action["type"]
         if kind == "goto":
@@ -191,13 +254,13 @@ def run_actions(page, actions: Iterable[dict], excel_path: str) -> str:
                 with page.expect_download(timeout=60000) as download_info:
                     page.click(selector)
                 download = download_info.value
-                download.save_as(excel_path)
+                temp_path, ext = _save_download_to_temp(download)
 
-                if not os.path.exists(excel_path) or os.path.getsize(excel_path) <= 0:
+                if not os.path.exists(temp_path) or os.path.getsize(temp_path) <= 0:
                     raise RuntimeError("Скачанный файл отсутствует или пустой")
 
-                print(f"✅ Скачивание успешно: {excel_path}")
-                return excel_path
+                print(f"✅ Скачивание успешно: {temp_path}")
+                return temp_path, ext
             except Exception as exc:
                 last_error = exc
                 print(f"⚠️ Скачивание не удалось: {exc}")

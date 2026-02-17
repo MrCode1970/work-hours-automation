@@ -15,9 +15,13 @@ __pycache__/
 # Local / sensitive
 service_key.json
 local_data.xlsx
+local_data.xlsx.tmp
 *.xlsx
 *.xls
 history/
+downloads/
+*.pdf
+*.raw.json
 .~lock.*
 debug_*.png
 debug_*.html
